@@ -1,0 +1,31 @@
+[Unit]
+Description=Code Execution Service (Sandbox API Daemon für Praxisarbeit)
+Documentation=https://github.com/LadiciusDev/praxisarbeit-code-execution
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+# Dienst läuft als Root oder dedizierter User in der docker-Gruppe
+User=root
+Group=root
+
+WorkingDirectory=/opt/code-execution
+EnvironmentFile=-/etc/default/code-execution
+
+Environment="PATH=/opt/code-execution/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
+Environment="RUNNER_HOST=10.10.1.20"
+Environment="RUNNER_PORT=8080"
+Environment="RUNNER_TEMP_DIR=/tmp/runner"
+
+ExecStart=/opt/code-execution/venv/bin/uvicorn app.main:app --host 10.10.1.20 --port 8080 --workers 2
+
+Restart=always
+RestartSec=3
+
+# WICHTIG: PrivateTmp muss 'false' sein, damit Docker auf dem Host denselben /tmp-Pfad mounten kann
+PrivateTmp=false
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

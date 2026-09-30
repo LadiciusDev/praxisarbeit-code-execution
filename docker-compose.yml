@@ -1,0 +1,17 @@
+services:
+  execution-runner:
+    build: .
+    container_name: code-execution-runner
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    volumes:
+      # Docker Socket für Container-Orchestrierung
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Temp-Ordner für Code-Mounts
+      - /tmp/runner:/tmp/runner
+    environment:
+      - RUNNER_HOST=0.0.0.0
+      - RUNNER_PORT=8081
+      - RUNNER_TIMEOUT_SECONDS=5.0
+      - RUNNER_TEMP_DIR=/tmp/runner
