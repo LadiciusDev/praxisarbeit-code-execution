@@ -36,14 +36,14 @@
 
 In der Zwei-VM-Infrastruktur der Praxisarbeit läuft der **Code Execution Service** als Daemon auf der **Ausführungs-VM**. 
 
-* **Keine öffentliche IP:** Die VM besitzt weder eine öffentliche IPv4- noch IPv6-Adresse (**Anforderung A4**).
+* **Keine öffentliche IP:** Die Execution-VM darf keine öffentliche IPv4- oder IPv6-Adresse besitzen. Während der automatisierten Erstkonfiguration darf sie über einen kontrollierten NAT-Zugang der Plattform-VM ausschließlich die für Installation und Image-Bezug notwendigen ausgehenden Verbindungen aufbauen. Nach Abschluss des Provisionings muss der ausgehende Internetzugriff gesperrt sein. Eingehend dürfen ausschließlich definierte Verbindungen von der privaten IP der Plattform-VM zugelassen werden. Der Testcode-Container besitzt keinen Netzwerkzugriff. (**Anforderung A4**).
 * **Internes Routing:** Eingehende Anfragen stammen ausschließlich von der vorgeschalteten Plattform-VM (`10.10.1.10`) über ein privates Hetzner vSwitch-Netzwerk (`10.10.1.0/24`).
 * **Ephemere Ausführung:** Jeder Ausführungsauftrag startet einen isolierten, kurzlebigen Docker-Container, der nach Beendigung sofort zerstört wird (`--rm`).
 
 ```mermaid
 flowchart LR
     Proxy["🌐 Nginx Reverse Proxy<br/><b>Plattform-VM</b> (10.10.1.10)"]
-    -->|"POST /api/execute<br/>(Privates Hetzner-Netz :8080)"| Daemon["⚙️ FastAPI Daemon<br/><b>Ausführungs-VM</b> (10.10.1.20)"]
+    -->|"POST /api/execute<br/>(Privates Hetzner-Netz :8081)"| Daemon["⚙️ FastAPI Daemon<br/><b>Ausführungs-VM</b> (10.10.1.20)"]
 
     Daemon -->|"1. Job-Dir & Datei anlegen"| FS["📁 /tmp/runner/job_uuid/"]
     Daemon -->|"2. docker run (strikte Limits)"| Sandbox["📦 Docker Sandbox-Container (A5)<br/>• --network none<br/>• Non-Root (1000:1000)<br/>• --read-only + tmpfs<br/>• Timeout: max. 5s"]
@@ -254,51 +254,61 @@ Im Rahmen der Praxisarbeit wird dieser Dienst vollautomatisiert via **Terraform*
 
 ```yaml
 #cloud-config
-package_update: true
-packages:
-  - docker.io
-  - python3-pip
-  - python3-venv
-  - ufw
 
 write_files:
-  - path: /etc/systemd/system/code-execution.service
-    permissions: '0644'
+  - path: /etc/netplan/60-private-network.yaml
+    owner: root:root
+    permissions: "0644"
     content: |
-      [Unit]
-      Description=Code Execution Service
-      After=network.target docker.service
-      Requires=docker.service
-
-      [Service]
-      Type=simple
-      User=root
-      WorkingDirectory=/opt/code-execution
-      ExecStart=/opt/code-execution/venv/bin/uvicorn app.main:app --host 10.10.1.20 --port 8080 --workers 2
-      Restart=always
-      PrivateTmp=false
-
-      [Install]
-      WantedBy=multi-user.target
+      network:
+        version: 2
+        renderer: networkd
+        ethernets:
+          enp7s0:
+            addresses:
+              - 10.10.1.20/32
+            routes:
+              - to: 10.10.0.1
+                scope: link
+              - to: default
+                via: 10.10.0.1
+            nameservers:
+              addresses: [1.1.1.1, 8.8.8.8]
 
 runcmd:
-  # 1. Host-Firewall absichern (Anforderung A4)
-  # Hetzner Cloud Firewalls filtern private vSwitches nicht; daher zwingend UFW auf dem Host:
-  - ufw default deny incoming
-  - ufw allow from 10.10.1.10 to any port 8080 proto tcp
-  - ufw allow from 10.10.1.10 to any port 22 proto tcp
-  - ufw --force enable
+  # 1. Hetzner DHCP-Services deaktivieren & Layer-3-Netplan anwenden
+  - systemctl stop hc-net-ifup@enp7s0.service || true
+  - systemctl mask hc-net-ifup@enp7s0.service || true
+  - netplan apply
 
-  # 2. Basis-Images vorab laden (verhindert Timeout beim ersten Ausführungsauftrag)
+  # 2. Warten, bis Plattform-NAT aktiv ist
+  - until ping -c 1 1.1.1.1 >/dev/null 2>&1; do sleep 3; done
+
+  # 3. Pakete & Docker installieren
+  - apt-get update
+  - apt-get install -y git docker.io docker-compose-v2
+  - systemctl enable --now docker
+
+  # 4. Runner-Images für A5 vorab laden (während NAT noch aktiv ist)
   - docker pull python:3.11-alpine
   - docker pull node:20-alpine
   - docker pull eclipse-temurin:21-alpine
 
-  # 3. Python-Umgebung initialisieren und Service starten
-  - python3 -m venv /opt/code-execution/venv
-  - /opt/code-execution/venv/bin/pip install -r /opt/code-execution/requirements.txt
-  - systemctl daemon-reload
-  - systemctl enable --now code-execution.service
+  # 5. Service via Docker Compose ausführen (Port 8081:8080)
+  - git clone "https://github.com/LadiciusDev/praxisarbeit-code-execution" /opt/code-execution
+  - cd /opt/code-execution && docker compose up --detach --build
+
+  # 6. Host-Firewall absichern (Anforderung A4 - Vollständiger Lockdown)
+  - ufw allow in on lo
+  - ufw allow out on lo
+  - ufw allow in on enp7s0 from 10.10.1.10 proto icmp
+  - ufw allow out on enp7s0 to 10.10.1.10 proto icmp
+  - ufw allow in on enp7s0 from 10.10.1.10 to any port 8081 proto tcp
+  - ufw allow in on enp7s0 from 10.10.1.10 to any port 22 proto tcp
+  - ufw allow out on enp7s0 to 10.10.1.10
+  - ufw default deny outgoing
+  - ufw default deny incoming
+  - ufw --force enable
 ```
 
 ---
@@ -309,7 +319,7 @@ runcmd:
 | :--- | :--- | :--- |
 | **A1** | **Automatisierte Bereitstellung** | Über die bereitgestellte `systemd`-Service-Unit und `cloud-init.yaml` lässt sich der Dienst ohne manuelles Eingreifen per IaC provisionieren. |
 | **A2** | **Funktionsfähige Lernplattform** | Bietet eine standardisierte REST-Schnittstelle (`/execute`, `/health`) für Python, JavaScript und Java mit einheitlicher Rückgabe von `stdout`, `stderr` und `exitCode`. |
-| **A4** | **Isolation der Ausführungs-VM** | Konzipiert für den Betrieb auf einer VM ohne Public IP; UFW-Regeln beschränken Port 8080 auf die private IP der Plattform-VM (`10.10.1.10`). |
+| **A4** | **Isolation der Ausführungs-VM** | Die Execution-VM darf keine öffentliche IPv4- oder IPv6-Adresse besitzen. Während der automatisierten Erstkonfiguration darf sie über einen kontrollierten NAT-Zugang der Plattform-VM ausschließlich die für Installation und Image-Bezug notwendigen ausgehenden Verbindungen aufbauen. Nach Abschluss des Provisionings muss der ausgehende Internetzugriff gesperrt sein. Eingehend dürfen ausschließlich definierte Verbindungen von der privaten IP der Plattform-VM zugelassen werden. Der Testcode-Container besitzt keinen Netzwerkzugriff. (`10.10.1.10`). |
 | **A5** | **Begrenzte Codeausführung** | Docker-Flags erzwingen `--network none`, Non-Root (`1000:1000`), RAM- und CPU-Limits, `--read-only` Root-Dateisystem und harten 5s-Timeout mit Exit-Code 124. |
 | **A6** | **Logging ohne Geheimnisse** | Strukturiertes JSON-Logging protokolliert ausschließlich Job-Metadaten (`jobId`, `language`, `durationMs`, `exitCode`). Quellcode oder sensible Umgebungsvariablen erscheinen nicht im Log. |
 | **A7** | **Reproduzierbarer Lebenszyklus** | Idempotente Einrichtung über Systempakete und pip; rückstandsloses Beenden und Aufräumen ephemerer Verzeichnisse nach jedem Job. |
