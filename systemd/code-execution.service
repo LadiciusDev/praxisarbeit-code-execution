@@ -15,10 +15,10 @@ EnvironmentFile=-/etc/default/code-execution
 
 Environment="PATH=/opt/code-execution/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
 Environment="RUNNER_HOST=10.10.1.20"
-Environment="RUNNER_PORT=8081"
+Environment="RUNNER_PORT=8080"
 Environment="RUNNER_TEMP_DIR=/tmp/runner"
 
-ExecStart=/opt/code-execution/venv/bin/uvicorn app.main:app --host 10.10.1.20 --port 8081 --workers 2
+ExecStart=/opt/code-execution/venv/bin/uvicorn app.main:app --host 10.10.1.20 --port 8080 --workers 2
 
 Restart=always
 RestartSec=3

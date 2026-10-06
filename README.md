@@ -43,7 +43,7 @@ In der Zwei-VM-Infrastruktur der Praxisarbeit läuft der **Code Execution Servic
 ```mermaid
 flowchart LR
     Proxy["🌐 Nginx Reverse Proxy<br/><b>Plattform-VM</b> (10.10.1.10)"]
-    -->|"POST /api/execute<br/>(Privates Hetzner-Netz :8081)"| Daemon["⚙️ FastAPI Daemon<br/><b>Ausführungs-VM</b> (10.10.1.20)"]
+    -->|"POST /api/execute<br/>(Privates Hetzner-Netz :8080)"| Daemon["⚙️ FastAPI Daemon<br/><b>Ausführungs-VM</b> (10.10.1.20)"]
 
     Daemon -->|"1. Job-Dir & Datei anlegen"| FS["📁 /tmp/runner/job_uuid/"]
     Daemon -->|"2. docker run (strikte Limits)"| Sandbox["📦 Docker Sandbox-Container (A5)<br/>• --network none<br/>• Non-Root (1000:1000)<br/>• --read-only + tmpfs<br/>• Timeout: max. 5s"]
@@ -294,7 +294,7 @@ runcmd:
   - docker pull node:20-alpine
   - docker pull eclipse-temurin:21-alpine
 
-  # 5. Service via Docker Compose ausführen (Port 8081:8080)
+  # 5. Service via Docker Compose ausführen (Port 8080:8080)
   - git clone "https://github.com/LadiciusDev/praxisarbeit-code-execution" /opt/code-execution
   - cd /opt/code-execution && docker compose up --detach --build
 
@@ -303,7 +303,7 @@ runcmd:
   - ufw allow out on lo
   - ufw allow in on enp7s0 from 10.10.1.10 proto icmp
   - ufw allow out on enp7s0 to 10.10.1.10 proto icmp
-  - ufw allow in on enp7s0 from 10.10.1.10 to any port 8081 proto tcp
+  - ufw allow in on enp7s0 from 10.10.1.10 to any port 8080 proto tcp
   - ufw allow in on enp7s0 from 10.10.1.10 to any port 22 proto tcp
   - ufw allow out on enp7s0 to 10.10.1.10
   - ufw default deny outgoing
